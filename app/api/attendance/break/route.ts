@@ -6,6 +6,12 @@ import Attendance from '@/models/Attendance';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_change_me';
 
+const BREAK_LIMITS = {
+  lunch: 45,    // 45 minutes max
+  short: 20,    // 20 minutes total per day
+  personal: 15, // 15 minutes max
+};
+
 export async function POST(req: Request) {
   try {
     const cookieStore = await cookies();
@@ -15,12 +21,15 @@ export async function POST(req: Request) {
     const decoded: any = jwt.verify(token, JWT_SECRET);
     const userId = decoded.userId;
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (userId === 'admin-id-static') return NextResponse.json({ error: 'Please use a real employee account' }, { status: 400 });
 
     const body = await req.json();
-    const { action, type = 'short' } = body; // action: 'start' | 'end'
+    const { action, type = 'short' } = body;
 
     const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(now.getTime() + istOffset);
+    const dateStr = istNow.toISOString().split('T')[0];
 
     await connectToDatabase();
 
@@ -42,17 +51,52 @@ export async function POST(req: Request) {
         if (completedLunch.length >= 1) return NextResponse.json({ error: 'Lunch break already used today' }, { status: 400 });
       }
 
+      // Short break: check total used today
+      if (type === 'short') {
+        const totalShortMins = record.breaks
+          .filter((b: any) => b.type === 'short' && b.endTime)
+          .reduce((sum: number, b: any) => sum + (b.durationMins || 0), 0);
+        if (totalShortMins >= BREAK_LIMITS.short) {
+          return NextResponse.json({ 
+            error: `Short break limit reached. You have used ${totalShortMins} of ${BREAK_LIMITS.short} minutes allowed today.` 
+          }, { status: 400 });
+        }
+      }
+
       record.breaks.push({ type, startTime: now });
+
     } else if (action === 'end') {
       const openBreak = record.breaks.find((b: any) => !b.endTime);
       if (!openBreak) return NextResponse.json({ error: 'No break in progress' }, { status: 400 });
+
+      const durationMins = Math.round((now.getTime() - openBreak.startTime.getTime()) / 60000);
       openBreak.endTime = now;
-      openBreak.durationMins = Math.round((now.getTime() - openBreak.startTime.getTime()) / 60000);
+      openBreak.durationMins = durationMins;
+
+      // Check if break limit exceeded — flag it
+      const limit = BREAK_LIMITS[openBreak.type as keyof typeof BREAK_LIMITS];
+      const exceeded = durationMins > limit;
+
+      if (exceeded) {
+        record.notes = (record.notes || '') + 
+          ` | BREAK_EXCEEDED: ${openBreak.type} ${durationMins}min (limit ${limit}min) at ${now.toISOString()}`;
+      }
+
+      await record.save();
+
+      return NextResponse.json({ 
+        success: true, 
+        record,
+        warning: exceeded ? `⚠️ ${openBreak.type} break exceeded limit by ${durationMins - limit} minutes. Manager has been flagged.` : null,
+        exceeded,
+        durationMins,
+        limit,
+      });
     }
 
     await record.save();
-
     return NextResponse.json({ success: true, record });
+
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }

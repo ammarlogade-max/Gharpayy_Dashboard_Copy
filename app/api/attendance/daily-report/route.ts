@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import connectToDatabase from '@/lib/mongodb';
 import Attendance from '@/models/Attendance';
-import User from '@/models/User';
+import ActivityLog from '@/models/ActivityLog';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_change_me';
 
@@ -24,20 +24,52 @@ export async function GET(req: Request) {
 
     const records = await Attendance.find({ date } as any).populate('employeeId', 'fullName email');
 
-    const reports = records.map((r) => {
+    const reports = await Promise.all(records.map(async (r) => {
       const emp = r.employeeId as any;
       const firstSession = r.sessions[0];
       const lastSession = r.sessions[r.sessions.length - 1];
+
       const timeline = [
         ...(r.sessions.map((s: any) => [
           { time: s.checkIn, event: 'Check In' },
           ...(s.checkOut ? [{ time: s.checkOut, event: 'Check Out' }] : []),
         ]).flat()),
         ...(r.breaks.map((b: any) => [
-          { time: b.startTime, event: `${b.type === 'lunch' ? 'Lunch' : 'Short'} Break Start` },
-          ...(b.endTime ? [{ time: b.endTime, event: `${b.type === 'lunch' ? 'Lunch' : 'Short'} Break End` }] : []),
+          { time: b.startTime, event: `${b.type === 'lunch' ? 'Lunch' : b.type === 'personal' ? 'Personal' : 'Short'} Break Start` },
+          ...(b.endTime ? [{ time: b.endTime, event: `${b.type === 'lunch' ? 'Lunch' : b.type === 'personal' ? 'Personal' : 'Short'} Break End` }] : []),
         ]).flat()),
       ].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+      // Get CRM activity for this employee today
+      const dayStart = new Date(date + 'T00:00:00.000Z');
+      const dayEnd = new Date(date + 'T23:59:59.999Z');
+
+      let crmActivity = { leadsContacted: 0, callsMade: 0, visitsScheduled: 0, messagesSent: 0 };
+
+      try {
+        const activities = await ActivityLog.find({
+          agentId: r.employeeId,
+          createdAt: { $gte: dayStart, $lte: dayEnd },
+        } as any);
+
+        crmActivity = {
+          leadsContacted: activities.filter((a: any) => ['lead_viewed', 'stage_updated', 'note_added'].includes(a.activityType || a.action)).length,
+          callsMade: activities.filter((a: any) => (a.activityType || a.action) === 'call_made').length,
+          visitsScheduled: activities.filter((a: any) => (a.activityType || a.action) === 'visit_scheduled').length,
+          messagesSent: activities.filter((a: any) => (a.activityType || a.action) === 'whatsapp_sent').length,
+        };
+      } catch { /* ActivityLog may be empty */ }
+
+      // Break summary
+      const lunchMins = r.breaks.filter((b: any) => b.type === 'lunch').reduce((s: number, b: any) => s + (b.durationMins || 0), 0);
+      const shortMins = r.breaks.filter((b: any) => b.type === 'short').reduce((s: number, b: any) => s + (b.durationMins || 0), 0);
+      const personalMins = r.breaks.filter((b: any) => b.type === 'personal').reduce((s: number, b: any) => s + (b.durationMins || 0), 0);
+
+      // Flag exceeded breaks
+      const breakFlags = [];
+      if (lunchMins > 45) breakFlags.push(`Lunch exceeded by ${lunchMins - 45}min`);
+      if (shortMins > 20) breakFlags.push(`Short breaks exceeded by ${shortMins - 20}min`);
+      if (personalMins > 15) breakFlags.push(`Personal break exceeded by ${personalMins - 15}min`);
 
       return {
         employeeId: r.employeeId,
@@ -51,8 +83,12 @@ export async function GET(req: Request) {
         sessions: r.sessions,
         timeline,
         isWithinGeofence: r.isWithinGeofence,
+        crmActivity,
+        breakSummary: { lunchMins, shortMins, personalMins },
+        breakFlags,
+        notes: r.notes || null,
       };
-    });
+    }));
 
     return NextResponse.json(reports);
   } catch (error: any) {
