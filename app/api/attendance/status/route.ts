@@ -30,7 +30,9 @@ if (userId === 'admin-id-static') {
 }
 
     const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
+    const istOffset = 5.5 * 60 * 60 * 1000;
+const istNow = new Date(now.getTime() + istOffset);
+const dateStr = istNow.toISOString().split('T')[0];
 
     await connectToDatabase();
 

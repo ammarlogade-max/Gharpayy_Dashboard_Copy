@@ -21,10 +21,13 @@ export function isWithinGeofence(lat: number, lng: number): boolean {
 export type DayStatus = 'Early' | 'On Time' | 'Late' | 'Absent';
 
 export function getDayStatus(checkInTime: Date): DayStatus {
-    const h = checkInTime.getHours();
-    const m = checkInTime.getMinutes();
+    // Convert to IST (UTC+5:30)
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const ist = new Date(checkInTime.getTime() + istOffset);
+    const h = ist.getUTCHours();
+    const m = ist.getUTCMinutes();
     const totalMins = h * 60 + m;
-    if (totalMins < 10 * 60) return 'Early';           // before 10:00 AM
-    if (totalMins <= 10 * 60 + 15) return 'On Time';   // 10:00 - 10:15 AM
-    return 'Late';                                       // after 10:15 AM
+    if (totalMins < 10 * 60) return 'Early';
+    if (totalMins <= 10 * 60 + 15) return 'On Time';
+    return 'Late';
   }
