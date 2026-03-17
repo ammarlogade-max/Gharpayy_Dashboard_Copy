@@ -22,7 +22,7 @@ export async function GET(req: Request) {
 
     await connectToDatabase();
 
-    const records = await Attendance.find({ date }).populate('employeeId', 'fullName email');
+    const records = await Attendance.find({ date } as any).populate('employeeId', 'fullName email');
 
     const reports = records.map((r) => {
       const emp = r.employeeId as any;
