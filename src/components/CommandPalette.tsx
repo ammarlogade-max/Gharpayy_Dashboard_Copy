@@ -104,10 +104,10 @@ const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
               {leads.slice(0, 6).map(lead => (
                 <CommandItem key={lead.id} onSelect={() => go('/leads')}>
                   <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center mr-2">
-                    <span className="text-[9px] font-bold text-accent">{lead.name.charAt(0)}</span>
+                    <span className="text-[9px] font-bold text-accent">{(lead.name || '?').charAt(0)}</span>
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-xs">{lead.name}</span>
+                  <span className="text-xs">{lead.name || 'Unknown'}</span>
                     <span className="text-[10px] text-muted-foreground">{lead.phone}</span>
                   </div>
                 </CommandItem>
