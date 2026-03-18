@@ -120,6 +120,18 @@ export default function AttendancePage() {
   const isManager = user?.role === 'admin' || user?.role === 'manager';
   const isEmployee = !isManager;
 
+  // Reset all state when user switches accounts
+useEffect(() => {
+  setEmps(MOCK_EMPS);
+  setHm(MOCK_HM);
+  setReports([]);
+  setMyAtt(null);
+  setMyUid(null);
+  setSelectedEmp(null);
+  setEmpDetail(null);
+  setLoading(true);
+}, [user?.id]);
+
   // Fix 3: ticking clock state
   const [currentTime, setCurrentTime] = useState(new Date());
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -267,17 +279,6 @@ export default function AttendancePage() {
   useEffect(() => {
     if (!authLoading) fetchAll();
   }, [fetchAll, authLoading]);
-
-  useEffect(() => {
-    // Reset all attendance state when user switches accounts
-    setEmps(MOCK_EMPS);
-    setHm(MOCK_HM);
-    setReports([]);
-    setMyAtt(null);
-    setMyUid(null);
-    setSelectedEmp(null);
-    setEmpDetail(null);
-  }, [user?.id]);
 
   // ─── Attendance actions ─────────────────────────────────────────────────────
 
