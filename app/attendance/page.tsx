@@ -75,21 +75,9 @@ const HM_COLOR: Record<DayStatus, string> = {
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const MOCK_EMPS: Employee[] = [
-  { _id: 'm1', name: 'Priya Sharma', status: 'On Time', checkIn: '10:02 AM', checkOut: null, workMins: 320, isOnBreak: false },
-  { _id: 'm2', name: 'Rahul Verma', status: 'Late', checkIn: '10:45 AM', checkOut: null, workMins: 210, isOnBreak: true },
-  { _id: 'm3', name: 'Neha Gupta', status: 'Early', checkIn: '09:45 AM', checkOut: null, workMins: 380, isOnBreak: false },
-  { _id: 'm4', name: 'Ankit Kumar', status: 'Absent', checkIn: null, checkOut: null, workMins: 0, isOnBreak: false },
-  { _id: 'm5', name: 'Meera Joshi', status: 'On Time', checkIn: '10:10 AM', checkOut: '01:00 PM', workMins: 230, isOnBreak: false },
-];
+const MOCK_EMPS: Employee[] = [];
 
-const MOCK_HM: HeatmapRow[] = [
-  { employeeId: 'm1', name: 'Priya Sharma', days: { Mon: { status: 'On Time', hours: 8 }, Tue: { status: 'On Time', hours: 8 }, Wed: { status: 'Late', hours: 7 }, Thu: { status: 'On Time', hours: 9 }, Fri: { status: 'Early', hours: 8 }, Sat: { status: 'Absent', hours: 0 } } },
-  { employeeId: 'm2', name: 'Rahul Verma', days: { Mon: { status: 'Late', hours: 7 }, Tue: { status: 'On Time', hours: 8 }, Wed: { status: 'On Time', hours: 8 }, Thu: { status: 'Absent', hours: 0 }, Fri: { status: 'On Time', hours: 9 }, Sat: { status: 'Absent', hours: 0 } } },
-  { employeeId: 'm3', name: 'Neha Gupta', days: { Mon: { status: 'Early', hours: 9 }, Tue: { status: 'Early', hours: 9 }, Wed: { status: 'On Time', hours: 8 }, Thu: { status: 'On Time', hours: 8 }, Fri: { status: 'On Time', hours: 8 }, Sat: { status: 'On Time', hours: 5 } } },
-  { employeeId: 'm4', name: 'Ankit Kumar', days: { Mon: { status: 'Absent', hours: 0 }, Tue: { status: 'Absent', hours: 0 }, Wed: { status: 'On Time', hours: 7 }, Thu: { status: 'Late', hours: 6 }, Fri: { status: 'On Time', hours: 8 }, Sat: { status: 'Absent', hours: 0 } } },
-  { employeeId: 'm5', name: 'Meera Joshi', days: { Mon: { status: 'On Time', hours: 8 }, Tue: { status: 'On Time', hours: 8 }, Wed: { status: 'On Time', hours: 8 }, Thu: { status: 'Early', hours: 9 }, Fri: { status: 'Late', hours: 6 }, Sat: { status: 'Absent', hours: 0 } } },
-];
+const MOCK_HM: HeatmapRow[] = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
