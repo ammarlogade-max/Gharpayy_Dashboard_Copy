@@ -117,6 +117,7 @@ function getISTDateStr(): string {
 
 export default function AttendancePage() {
   const { user, loading: authLoading } = useAuth();
+  if (authLoading || !user) return null;
   const isManager = user?.role === 'admin' || user?.role === 'manager';
   const isEmployee = !isManager;
 
