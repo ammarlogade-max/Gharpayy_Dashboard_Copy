@@ -75,7 +75,6 @@ const HM_COLOR: Record<DayStatus, string> = {
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Mock data used as fallback when no real data exists yet
 const MOCK_EMPS: Employee[] = [
   { _id: 'm1', name: 'Priya Sharma', status: 'On Time', checkIn: '10:02 AM', checkOut: null, workMins: 320, isOnBreak: false },
   { _id: 'm2', name: 'Rahul Verma', status: 'Late', checkIn: '10:45 AM', checkOut: null, workMins: 210, isOnBreak: true },
@@ -92,6 +91,8 @@ const MOCK_HM: HeatmapRow[] = [
   { employeeId: 'm5', name: 'Meera Joshi', days: { Mon: { status: 'On Time', hours: 8 }, Tue: { status: 'On Time', hours: 8 }, Wed: { status: 'On Time', hours: 8 }, Thu: { status: 'Early', hours: 9 }, Fri: { status: 'Late', hours: 6 }, Sat: { status: 'Absent', hours: 0 } } },
 ];
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function fmtMins(m: number) {
   if (!m) return '0h 0m';
   return `${Math.floor(m / 60)}h ${m % 60}m`;
@@ -101,9 +102,8 @@ function getWeekStr(): string {
   const today = new Date();
   const year = today.getFullYear();
   const startOfYear = new Date(year, 0, 1);
-  const weekNum = Math.ceil(
-    ((today.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7
-  );
+  const diff = today.getTime() - startOfYear.getTime();
+  const weekNum = Math.ceil((diff / 86400000 + startOfYear.getDay() + 1) / 7);
   return `${year}-${String(weekNum).padStart(2, '0')}`;
 }
 
@@ -113,27 +113,43 @@ function getISTDateStr(): string {
   return new Date(now.getTime() + istOffset).toISOString().split('T')[0];
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// FIX: single safe ID extractor used everywhere — never crashes on null
+function getEmpId(employeeId: any): string {
+  if (!employeeId) return '';
+  if (typeof employeeId === 'object') return String(employeeId?._id || '');
+  return String(employeeId);
+}
+
+// ─── Page shell — splits auth loading from content ────────────────────────────
 
 export default function AttendancePage() {
   const { user, loading: authLoading } = useAuth();
-  if (authLoading || !user) return null;
+
+  // FIX: show skeleton while auth loads — prevents ALL null._id crashes
+  if (authLoading) {
+    return (
+      <AppLayout title="Attendance" subtitle="Team presence and time tracking">
+        <div className="space-y-3">
+          <Skeleton className="h-12 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-32 rounded-xl" />
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (!user) return null;
+
+  // FIX: key={user._id || user.id} forces full remount on account switch
+  // This is the nuclear fix for role switch stale state
+  return <AttendanceContent key={String((user as any)?._id || (user as any)?.id || 'guest')} user={user} />;
+}
+
+// ─── Content — only renders when user is guaranteed non-null ──────────────────
+
+function AttendanceContent({ user }: { user: any }) {
   const isManager = user?.role === 'admin' || user?.role === 'manager';
-  const isEmployee = !isManager;
 
-  // Reset all state when user switches accounts
-useEffect(() => {
-  setEmps(MOCK_EMPS);
-  setHm(MOCK_HM);
-  setReports([]);
-  setMyAtt(null);
-  setMyUid(null);
-  setSelectedEmp(null);
-  setEmpDetail(null);
-  setLoading(true);
-}, [user?.id]);
-
-  // Fix 3: ticking clock state
   const [currentTime, setCurrentTime] = useState(new Date());
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -142,20 +158,18 @@ useEffect(() => {
   const [hm, setHm] = useState<HeatmapRow[]>(MOCK_HM);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [myAtt, setMyAtt] = useState<any>(null);
-  const [myUid, setMyUid] = useState<string | null>(null);
+  const [myUid, setMyUid] = useState<string>('');
   const [locLoading, setLocLoading] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
   const [empDetail, setEmpDetail] = useState<DailyReport | null>(null);
 
-  // Fix 3: Start ticking clock
+  // Ticking clock
   useEffect(() => {
     clockRef.current = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => {
-      if (clockRef.current) clearInterval(clockRef.current);
-    };
+    return () => { if (clockRef.current) clearInterval(clockRef.current); };
   }, []);
 
-  // ─── Data fetching ──────────────────────────────────────────────────────────
+  // ─── Fetch ──────────────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -169,102 +183,82 @@ useEffect(() => {
         fetch(`/api/attendance?week=${weekStr}`).then(r => r.ok ? r.json() : []),
       ]);
 
-      // ── My own attendance status ──
+      // My status
       if (statusRes.status === 'fulfilled' && statusRes.value?.user) {
         const att = statusRes.value;
-        const rawId = att.attendance?.employeeId;
-        const realId = (rawId as any)?._id || rawId || att.user?._id;
+        const realId = getEmpId(att.attendance?.employeeId) || getEmpId(att.user?._id) || String(att.user?.id || '');
 
         if (realId) {
-          setMyUid(String(realId));
+          setMyUid(realId);
           setMyAtt(att);
 
-          // Inject into employee list
           const empEntry: Employee = {
-            _id: String(realId),
-            name: att.user.fullName || att.user.email,
+            _id: realId,
+            name: att.user?.fullName || att.user?.email || 'Unknown',
             status: att.attendance?.dayStatus || 'Absent',
-            checkIn: att.lastSession?.checkIn
-              ? format(new Date(att.lastSession.checkIn), 'hh:mm a')
-              : null,
-            checkOut: att.lastSession?.checkOut
-              ? format(new Date(att.lastSession.checkOut), 'hh:mm a')
-              : null,
+            checkIn: att.lastSession?.checkIn ? format(new Date(att.lastSession.checkIn), 'hh:mm a') : null,
+            checkOut: att.lastSession?.checkOut ? format(new Date(att.lastSession.checkOut), 'hh:mm a') : null,
             workMins: att.attendance?.totalWorkMins || 0,
             isOnBreak: att.isOnBreak || false,
           };
 
           setEmps(prev => {
-            const exists = prev.find(e => e._id === String(realId));
-            if (exists) return prev.map(e => e._id === String(realId) ? empEntry : e);
-            // Only add if not already in mock list (avoid duplicate mock names)
+            const exists = prev.find(e => e._id === realId);
+            if (exists) return prev.map(e => e._id === realId ? empEntry : e);
             return [...prev, empEntry];
           });
 
-          // Inject into heatmap
           if (att.attendance) {
-            const todayDay = WEEK_DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
-            const hours = parseFloat((att.attendance.totalWorkMins / 60).toFixed(1));
-
+            const dayIdx = new Date().getDay();
+            const todayDay = WEEK_DAYS[dayIdx === 0 ? 6 : dayIdx - 1];
+            const hours = parseFloat(((att.attendance.totalWorkMins || 0) / 60).toFixed(1));
             setHm(prev => {
-              const exists = prev.find(h => h.employeeId === String(realId));
+              const exists = prev.find(h => h.employeeId === realId);
               const dayEntry = { status: att.attendance.dayStatus as DayStatus, hours };
-              const newRow: HeatmapRow = exists
-                ? { ...exists, days: { ...exists.days, [todayDay]: dayEntry } }
-                : { employeeId: String(realId), name: att.user.fullName, days: { [todayDay]: dayEntry } };
-              if (exists) return prev.map(h => h.employeeId === String(realId) ? newRow : h);
-              return [...prev, newRow];
+              if (exists) return prev.map(h => h.employeeId === realId ? { ...h, days: { ...h.days, [todayDay]: dayEntry } } : h);
+              return [...prev, { employeeId: realId, name: att.user?.fullName || '', days: { [todayDay]: dayEntry } }];
             });
           }
         }
       }
 
-      // ── Daily reports (manager: all employees, employee: only self) ──
+      // Daily reports
       if (reportRes.status === 'fulfilled' && Array.isArray(reportRes.value) && reportRes.value.length > 0) {
         setReports(reportRes.value);
-
-        // For managers: also update employee list from real report data
         if (isManager) {
           setEmps(prev => {
             const updated = [...prev];
             for (const r of reportRes.value as DailyReport[]) {
-              const rid = typeof r.employeeId === 'object' ? (r.employeeId as any)._id : r.employeeId;
-              const idx = updated.findIndex(e => e._id === String(rid));
+              const rid = getEmpId(r.employeeId);
+              if (!rid) continue;
+              const idx = updated.findIndex(e => e._id === rid);
               const entry: Employee = {
-                _id: String(rid),
-                name: r.name,
+                _id: rid,
+                name: r.name || 'Unknown',
                 status: r.dayStatus,
                 checkIn: r.checkIn ? format(new Date(r.checkIn), 'hh:mm a') : null,
                 checkOut: r.checkOut ? format(new Date(r.checkOut), 'hh:mm a') : null,
-                workMins: r.totalWorkMins,
+                workMins: r.totalWorkMins || 0,
                 isOnBreak: false,
               };
               if (idx >= 0) updated[idx] = entry;
-              else if (!updated.find(e => e._id === String(rid))) updated.push(entry);
+              else if (!updated.find(e => e._id === rid)) updated.push(entry);
             }
             return updated;
           });
         }
       }
 
-      // ── Heatmap (manager: all, employee: self) ──
+      // Heatmap
       if (hmRes.status === 'fulfilled' && Array.isArray(hmRes.value) && hmRes.value.length > 0) {
-        // Build heatmap rows grouped by employee
         const grouped: Record<string, HeatmapRow> = {};
         for (const entry of hmRes.value as any[]) {
-          const eid = String(entry.employeeId?._id || entry.employeeId);
-          const empName = entry.employeeName || 'Unknown';
-          const date = entry.date; // YYYY-MM-DD
-          const dayOfWeek = new Date(date).getDay();
+          const eid = getEmpId(entry.employeeId) || String(entry.employeeId || '');
+          if (!eid || !entry.date) continue;
+          const dayOfWeek = new Date(entry.date).getDay();
           const dayLabel = WEEK_DAYS[dayOfWeek === 0 ? 6 : dayOfWeek - 1];
-
-          if (!grouped[eid]) {
-            grouped[eid] = { employeeId: eid, name: empName, days: {} };
-          }
-          grouped[eid].days[dayLabel] = {
-            status: entry.dayStatus as DayStatus,
-            hours: entry.totalWorkHours || 0,
-          };
+          if (!grouped[eid]) grouped[eid] = { employeeId: eid, name: entry.employeeName || 'Unknown', days: {} };
+          grouped[eid].days[dayLabel] = { status: entry.dayStatus as DayStatus, hours: entry.totalWorkHours || 0 };
         }
         const newHm = Object.values(grouped);
         if (newHm.length > 0) setHm(newHm);
@@ -277,14 +271,12 @@ useEffect(() => {
     }
   }, [isManager]);
 
-  useEffect(() => {
-    if (!authLoading) fetchAll();
-  }, [fetchAll, authLoading]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // ─── Attendance actions ─────────────────────────────────────────────────────
+  // ─── Actions ────────────────────────────────────────────────────────────────
 
   const getCoords = (): Promise<{ lat: number; lng: number } | null> =>
-    new Promise((resolve) => {
+    new Promise(resolve => {
       if (!navigator.geolocation) { resolve(null); return; }
       navigator.geolocation.getCurrentPosition(
         pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
@@ -293,7 +285,9 @@ useEffect(() => {
       );
     });
 
+  // FIX: hard guard — cannot auto-fire, only fires on button click with check
   const doCheckin = async () => {
+    if (myAtt?.isCheckedIn) { toast.error('Already checked in'); return; }
     setLocLoading(true);
     try {
       const coords = await getCoords();
@@ -304,7 +298,7 @@ useEffect(() => {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Check-in failed');
-      toast.success(coords ? '✓ Checked in with location!' : '✓ Checked in (location unavailable)');
+      toast.success(coords ? '✓ Checked in with location!' : '✓ Checked in');
       fetchAll();
     } catch (err: any) {
       toast.error(err.message);
@@ -313,7 +307,9 @@ useEffect(() => {
     }
   };
 
+  // FIX: hard guard — cannot auto-fire
   const doCheckout = async () => {
+    if (!myAtt?.isCheckedIn) { toast.error('Not checked in'); return; }
     setLocLoading(true);
     try {
       const coords = await getCoords();
@@ -324,7 +320,7 @@ useEffect(() => {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Check-out failed');
-      toast.success(coords ? '✓ Checked out with location!' : '✓ Checked out');
+      toast.success('✓ Checked out');
       fetchAll();
     } catch (err: any) {
       toast.error(err.message);
@@ -350,89 +346,74 @@ useEffect(() => {
     }
   };
 
-  // ─── Drill-down ─────────────────────────────────────────────────────────────
+  // ─── Drill-down ──────────────────────────────────────────────────────────────
 
   const openDrillDown = (e: Employee) => {
     setSelectedEmp(e);
-    const report = reports.find(r => {
-      const id = typeof r.employeeId === 'object' ? (r.employeeId as any)._id : r.employeeId;
-      return String(id) === e._id;
-    });
+    // FIX: safe find
+    const report = reports.find(r => r?.employeeId && getEmpId(r.employeeId) === e._id);
     setEmpDetail(report || null);
   };
 
   const closeDrillDown = () => { setSelectedEmp(null); setEmpDetail(null); };
 
-  // ─── Derived values ──────────────────────────────────────────────────────────
+  // ─── Derived ─────────────────────────────────────────────────────────────────
 
-  const myReport = reports.find(r => {
-    const id = typeof r.employeeId === 'object' ? (r.employeeId as any)._id : r.employeeId;
-    return String(id) === myUid;
-  });
+  // FIX: safe find
+  const myReport = reports.find(r => r?.employeeId && myUid && getEmpId(r.employeeId) === myUid);
 
   const present = emps.filter(e => e.status !== 'Absent').length;
   const late = emps.filter(e => e.status === 'Late').length;
   const onBreak = emps.filter(e => e.isOnBreak).length;
-
   const isCheckedIn = myAtt?.isCheckedIn || false;
   const isOnBreak = myAtt?.isOnBreak || false;
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <AppLayout title="Attendance" subtitle="Team presence and time tracking">
 
-      {/* Employee view: only Clock In/Out + Timeline */}
-      {isEmployee && (
+      {/* Employee — 2 tabs */}
+      {!isManager && (
         <Tabs defaultValue="clock" className="space-y-4">
           <TabsList className="flex flex-wrap gap-1 h-auto">
             <TabsTrigger value="clock" className="text-xs gap-1"><Clock size={12} /> Clock In/Out</TabsTrigger>
             <TabsTrigger value="timeline" className="text-xs gap-1"><CalendarDays size={12} /> My Timeline</TabsTrigger>
           </TabsList>
 
-          {/* Clock In/Out */}
           <TabsContent value="clock">
-            <EmployeeClockTab
-              currentTime={currentTime}
-              myAtt={myAtt}
-              isCheckedIn={isCheckedIn}
-              isOnBreak={isOnBreak}
-              locLoading={locLoading}
-              doCheckin={doCheckin}
-              doCheckout={doCheckout}
-              doBreak={doBreak}
-            />
+            <ClockTab currentTime={currentTime} myAtt={myAtt} isCheckedIn={isCheckedIn}
+              isOnBreak={isOnBreak} locLoading={locLoading}
+              doCheckin={doCheckin} doCheckout={doCheckout} doBreak={doBreak} />
           </TabsContent>
 
-          {/* My Timeline */}
           <TabsContent value="timeline">
             <div className="kpi-card">
               <h3 className="font-semibold text-xs mb-4">My Today's Timeline</h3>
-              {loading ? (
-                <Skeleton className="h-32 rounded-xl" />
-              ) : myReport && myReport.timeline.length > 0 ? (
-                <div className="space-y-3">
-                  {myReport.timeline.map((t, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <div className="w-16 text-[10px] text-muted-foreground text-right shrink-0">
-                        {format(new Date(t.time), 'hh:mm a')}
+              {loading ? <Skeleton className="h-32 rounded-xl" /> :
+                myReport && (myReport.timeline?.length || 0) > 0 ? (
+                  <div className="space-y-3">
+                    {myReport.timeline.map((t, i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <div className="w-16 text-[10px] text-muted-foreground text-right shrink-0">
+                          {format(new Date(t.time), 'hh:mm a')}
+                        </div>
+                        <div className="w-2 h-2 rounded-full bg-accent shrink-0" />
+                        <div className="text-xs text-foreground">{t.event}</div>
                       </div>
-                      <div className="w-2 h-2 rounded-full bg-accent shrink-0" />
-                      <div className="text-xs text-foreground">{t.event}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground text-center py-8">
-                  No events yet today. Check in to start tracking.
-                </p>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-8">
+                    No events yet today. Check in to start tracking.
+                  </p>
+                )}
             </div>
           </TabsContent>
         </Tabs>
       )}
 
-      {/* Manager/Admin view: all tabs */}
+      {/* Manager/Admin — 5 tabs */}
       {isManager && (
         <Tabs defaultValue="heatmap" className="space-y-4">
           <TabsList className="flex flex-wrap gap-1 h-auto">
@@ -443,7 +424,7 @@ useEffect(() => {
             <TabsTrigger value="clock" className="text-xs gap-1"><Clock size={12} /> Clock In/Out</TabsTrigger>
           </TabsList>
 
-          {/* ── Heatmap ── */}
+          {/* Heatmap */}
           <TabsContent value="heatmap">
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="kpi-card overflow-x-auto">
               <h3 className="font-semibold text-xs text-foreground mb-4">Weekly Attendance Heatmap</h3>
@@ -451,9 +432,7 @@ useEffect(() => {
                 <thead>
                   <tr className="text-muted-foreground">
                     <th className="text-left py-2 pr-4 font-medium min-w-[120px]">Employee</th>
-                    {WEEK_DAYS.map(d => (
-                      <th key={d} className="text-center py-2 px-2 font-medium w-16">{d}</th>
-                    ))}
+                    {WEEK_DAYS.map(d => <th key={d} className="text-center py-2 px-2 font-medium w-16">{d}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -466,15 +445,10 @@ useEffect(() => {
                         const hrs = day?.hours || 0;
                         return (
                           <td key={d} className="py-2 px-1 text-center">
-                            <div
-                              className="w-12 h-9 rounded mx-auto flex flex-col items-center justify-center"
-                              style={{ background: HM_COLOR[s] }}
-                            >
-                              {hrs > 0 ? (
-                                <span className="text-[9px] font-bold text-white">{hrs}h</span>
-                              ) : (
-                                <span className="text-[9px] font-semibold text-white/70">—</span>
-                              )}
+                            <div className="w-12 h-9 rounded mx-auto flex flex-col items-center justify-center" style={{ background: HM_COLOR[s] }}>
+                              {hrs > 0
+                                ? <span className="text-[9px] font-bold text-white">{hrs}h</span>
+                                : <span className="text-[9px] font-semibold text-white/70">—</span>}
                             </div>
                           </td>
                         );
@@ -483,19 +457,17 @@ useEffect(() => {
                   ))}
                 </tbody>
               </table>
-              {/* Legend */}
               <div className="flex gap-4 mt-4 flex-wrap">
                 {Object.entries(HM_COLOR).map(([k, v]) => (
                   <div key={k} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                    <div className="w-3 h-3 rounded" style={{ background: v }} />
-                    {k}
+                    <div className="w-3 h-3 rounded" style={{ background: v }} />{k}
                   </div>
                 ))}
               </div>
             </motion.div>
           </TabsContent>
 
-          {/* ── Live Status ── */}
+          {/* Live Status */}
           <TabsContent value="live">
             <div className="grid grid-cols-3 gap-3 mb-4">
               {[
@@ -511,14 +483,10 @@ useEffect(() => {
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {emps.map((e, i) => (
-                <motion.div
-                  key={e._id}
+                <motion.div key={e._id}
                   className="kpi-card cursor-pointer hover:border-accent/40 hover:shadow-sm transition-all"
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                  onClick={() => openDrillDown(e)}
-                >
+                  initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                  onClick={() => openDrillDown(e)}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center">
@@ -542,7 +510,7 @@ useEffect(() => {
             </div>
           </TabsContent>
 
-          {/* ── Daily Summary ── */}
+          {/* Daily Summary */}
           <TabsContent value="summary">
             <div className="kpi-card overflow-x-auto">
               <h3 className="font-semibold text-xs mb-4">Today's Attendance Summary</h3>
@@ -562,22 +530,14 @@ useEffect(() => {
                 </thead>
                 <tbody>
                   {(() => {
-                    const realIds = new Set(reports.map(r => {
-                      const id = typeof r.employeeId === 'object' ? (r.employeeId as any)._id : r.employeeId;
-                      return String(id);
-                    }));
+                    const realIds = new Set(
+                      reports.filter(r => r?.employeeId).map(r => getEmpId(r.employeeId)).filter(Boolean)
+                    );
                     const mockRows = emps.filter(e => !realIds.has(e._id));
                     const allRows = [
-                      ...reports.map(r => {
-                        const id = typeof r.employeeId === 'object' ? (r.employeeId as any)._id : r.employeeId;
-                        return { _id: String(id), isReal: true, r };
-                      }),
+                      ...reports.filter(r => r?.employeeId).map(r => ({ _id: getEmpId(r.employeeId), isReal: true, r })),
                       ...mockRows.map(e => ({ _id: e._id, isReal: false, e })),
-                    ].sort((a, b) => {
-                      if (a._id === myUid) return -1;
-                      if (b._id === myUid) return 1;
-                      return 0;
-                    });
+                    ].sort((a, b) => (a._id === myUid ? -1 : b._id === myUid ? 1 : 0));
 
                     return allRows.map(row => {
                       if (row.isReal) {
@@ -587,27 +547,19 @@ useEffect(() => {
                             <td className="py-2.5 px-3 font-medium">
                               {r.name}
                               {row._id === myUid && <span className="text-[9px] text-accent ml-1">(you)</span>}
-                              {(r.breakFlags?.length || 0) > 0 && (
-                                <span className="ml-1 text-[9px] text-red-500" title={r.breakFlags?.join(', ')}>⚠️</span>
-                              )}
+                              {(r.breakFlags?.length || 0) > 0 && <span className="ml-1 text-[9px] text-red-500">⚠️</span>}
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               <Badge className={`text-[10px] ${STATUS_COLOR[r.dayStatus]}`}>{r.dayStatus}</Badge>
                             </td>
-                            <td className="py-2.5 px-3 text-center text-muted-foreground">
-                              {r.checkIn ? format(new Date(r.checkIn), 'hh:mm a') : '—'}
-                            </td>
-                            <td className="py-2.5 px-3 text-center text-muted-foreground">
-                              {r.checkOut ? format(new Date(r.checkOut), 'hh:mm a') : '—'}
-                            </td>
+                            <td className="py-2.5 px-3 text-center text-muted-foreground">{r.checkIn ? format(new Date(r.checkIn), 'hh:mm a') : '—'}</td>
+                            <td className="py-2.5 px-3 text-center text-muted-foreground">{r.checkOut ? format(new Date(r.checkOut), 'hh:mm a') : '—'}</td>
                             <td className="py-2.5 px-3 text-center font-medium">{fmtMins(r.totalWorkMins)}</td>
                             <td className="py-2.5 px-3 text-center font-semibold text-blue-600">{r.crmActivity?.leadsContacted || 0}</td>
                             <td className="py-2.5 px-3 text-center font-semibold text-green-600">{r.crmActivity?.callsMade || 0}</td>
                             <td className="py-2.5 px-3 text-center font-semibold text-purple-600">{r.crmActivity?.visitsScheduled || 0}</td>
                             <td className="py-2.5 px-3 text-center">
-                              {r.isWithinGeofence
-                                ? <CheckCircle size={13} className="text-green-500 mx-auto" />
-                                : <XCircle size={13} className="text-red-400 mx-auto" />}
+                              {r.isWithinGeofence ? <CheckCircle size={13} className="text-green-500 mx-auto" /> : <XCircle size={13} className="text-red-400 mx-auto" />}
                             </td>
                           </tr>
                         );
@@ -616,16 +568,11 @@ useEffect(() => {
                         return (
                           <tr key={e._id} className="border-b border-border/50 hover:bg-secondary/30">
                             <td className="py-2.5 px-3 font-medium text-muted-foreground">{e.name}</td>
-                            <td className="py-2.5 px-3 text-center">
-                              <Badge className={`text-[10px] ${STATUS_COLOR[e.status]}`}>{e.status}</Badge>
-                            </td>
+                            <td className="py-2.5 px-3 text-center"><Badge className={`text-[10px] ${STATUS_COLOR[e.status]}`}>{e.status}</Badge></td>
                             <td className="py-2.5 px-3 text-center text-muted-foreground">{e.checkIn || '—'}</td>
                             <td className="py-2.5 px-3 text-center text-muted-foreground">{e.checkOut || '—'}</td>
                             <td className="py-2.5 px-3 text-center">{fmtMins(e.workMins)}</td>
-                            <td className="py-2.5 px-3 text-center text-muted-foreground">—</td>
-                            <td className="py-2.5 px-3 text-center text-muted-foreground">—</td>
-                            <td className="py-2.5 px-3 text-center text-muted-foreground">—</td>
-                            <td className="py-2.5 px-3 text-center text-muted-foreground">—</td>
+                            <td colSpan={4} className="py-2.5 px-3 text-center text-muted-foreground">—</td>
                           </tr>
                         );
                       }
@@ -636,64 +583,45 @@ useEffect(() => {
             </div>
           </TabsContent>
 
-          {/* ── Manager Timeline (shows selected employee) ── */}
+          {/* Timeline */}
           <TabsContent value="timeline">
             <div className="kpi-card">
               <h3 className="font-semibold text-xs mb-4">Today's Timeline</h3>
-              {loading ? (
-                <Skeleton className="h-32 rounded-xl" />
-              ) : myReport && myReport.timeline.length > 0 ? (
-                <div className="space-y-3">
-                  <p className="text-[10px] text-muted-foreground mb-3">Showing your timeline</p>
-                  {myReport.timeline.map((t, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <div className="w-16 text-[10px] text-muted-foreground text-right shrink-0">
-                        {format(new Date(t.time), 'hh:mm a')}
+              {loading ? <Skeleton className="h-32 rounded-xl" /> :
+                myReport && (myReport.timeline?.length || 0) > 0 ? (
+                  <div className="space-y-3">
+                    <p className="text-[10px] text-muted-foreground mb-3">Showing your timeline</p>
+                    {myReport.timeline.map((t, i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <div className="w-16 text-[10px] text-muted-foreground text-right shrink-0">{format(new Date(t.time), 'hh:mm a')}</div>
+                        <div className="w-2 h-2 rounded-full bg-accent shrink-0" />
+                        <div className="text-xs text-foreground">{t.event}</div>
                       </div>
-                      <div className="w-2 h-2 rounded-full bg-accent shrink-0" />
-                      <div className="text-xs text-foreground">{t.event}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground text-center py-8">
-                  No timeline events yet. Click an employee in Live Status to view their details.
-                </p>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-8">No timeline events yet today.</p>
+                )}
             </div>
           </TabsContent>
 
-          {/* ── Manager Clock In/Out (for their own attendance) ── */}
+          {/* Clock */}
           <TabsContent value="clock">
-            <EmployeeClockTab
-              currentTime={currentTime}
-              myAtt={myAtt}
-              isCheckedIn={isCheckedIn}
-              isOnBreak={isOnBreak}
-              locLoading={locLoading}
-              doCheckin={doCheckin}
-              doCheckout={doCheckout}
-              doBreak={doBreak}
-            />
+            <ClockTab currentTime={currentTime} myAtt={myAtt} isCheckedIn={isCheckedIn}
+              isOnBreak={isOnBreak} locLoading={locLoading}
+              doCheckin={doCheckin} doCheckout={doCheckout} doBreak={doBreak} />
           </TabsContent>
         </Tabs>
       )}
 
-      {/* ── Drill-down modal (outside Tabs to avoid z-index issues) ── */}
+      {/* Drill-down modal */}
       {selectedEmp && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
           className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={closeDrillDown}
-        >
-          <motion.div
-            initial={{ scale: 0.95, y: 10 }}
-            animate={{ scale: 1, y: 0 }}
+          onClick={closeDrillDown}>
+          <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }}
             className="bg-card rounded-2xl border border-border p-6 w-full max-w-md max-h-[80vh] overflow-y-auto"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
+            onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
@@ -704,13 +632,12 @@ useEffect(() => {
                   <Badge className={`text-[10px] ${STATUS_COLOR[selectedEmp.status]}`}>{selectedEmp.status}</Badge>
                 </div>
               </div>
-              <button
-                onClick={closeDrillDown}
-                className="text-muted-foreground hover:text-foreground text-lg font-bold w-8 h-8 flex items-center justify-center rounded-lg hover:bg-secondary transition-colors"
-              >✕</button>
+              <button onClick={closeDrillDown}
+                className="text-muted-foreground hover:text-foreground text-lg font-bold w-8 h-8 flex items-center justify-center rounded-lg hover:bg-secondary transition-colors">
+                ✕
+              </button>
             </div>
 
-            {/* Stats */}
             <div className="grid grid-cols-2 gap-3 mb-4">
               {[
                 { label: 'Check In', value: selectedEmp.checkIn || '—' },
@@ -720,12 +647,11 @@ useEffect(() => {
               ].map(s => (
                 <div key={s.label} className="p-3 rounded-xl bg-secondary/50 text-center">
                   <p className="text-[10px] text-muted-foreground">{s.label}</p>
-                  <p className={`text-sm font-semibold ${s.highlight || ''}`}>{s.value}</p>
+                  <p className={`text-sm font-semibold ${(s as any).highlight || ''}`}>{s.value}</p>
                 </div>
               ))}
             </div>
 
-            {/* CRM Activity */}
             {empDetail?.crmActivity && (
               <div className="mb-4">
                 <p className="text-xs font-semibold text-foreground mb-2">CRM Activity Today</p>
@@ -746,17 +672,13 @@ useEffect(() => {
               </div>
             )}
 
-            {/* Break flags */}
             {(empDetail?.breakFlags?.length || 0) > 0 && (
               <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200">
                 <p className="text-xs font-semibold text-red-600 mb-1">⚠️ Break Limit Exceeded</p>
-                {empDetail!.breakFlags!.map((f, i) => (
-                  <p key={i} className="text-[11px] text-red-500">{f}</p>
-                ))}
+                {empDetail!.breakFlags!.map((f, i) => <p key={i} className="text-[11px] text-red-500">{f}</p>)}
               </div>
             )}
 
-            {/* Break history */}
             {(empDetail?.breaks?.length || 0) > 0 && (
               <div className="mb-4">
                 <p className="text-xs font-semibold text-foreground mb-2">Break History</p>
@@ -777,16 +699,13 @@ useEffect(() => {
               </div>
             )}
 
-            {/* Timeline */}
             {(empDetail?.timeline?.length || 0) > 0 && (
               <div>
                 <p className="text-xs font-semibold text-foreground mb-2">Activity Log</p>
                 <div className="space-y-2">
                   {empDetail!.timeline.map((t, i) => (
                     <div key={i} className="flex items-center gap-3">
-                      <div className="w-14 text-[10px] text-muted-foreground text-right shrink-0">
-                        {format(new Date(t.time), 'hh:mm a')}
-                      </div>
+                      <div className="w-14 text-[10px] text-muted-foreground text-right shrink-0">{format(new Date(t.time), 'hh:mm a')}</div>
                       <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
                       <div className="text-[11px] text-foreground">{t.event}</div>
                     </div>
@@ -795,11 +714,7 @@ useEffect(() => {
               </div>
             )}
 
-            {!empDetail && (
-              <p className="text-xs text-muted-foreground text-center py-4">
-                No detailed records for this employee today.
-              </p>
-            )}
+            {!empDetail && <p className="text-xs text-muted-foreground text-center py-4">No detailed records for this employee today.</p>}
           </motion.div>
         </motion.div>
       )}
@@ -807,30 +722,15 @@ useEffect(() => {
   );
 }
 
-// ─── Extracted Clock Tab Component ────────────────────────────────────────────
+// ─── Clock Tab ────────────────────────────────────────────────────────────────
 
-function EmployeeClockTab({
-  currentTime,
-  myAtt,
-  isCheckedIn,
-  isOnBreak,
-  locLoading,
-  doCheckin,
-  doCheckout,
-  doBreak,
-}: {
-  currentTime: Date;
-  myAtt: any;
-  isCheckedIn: boolean;
-  isOnBreak: boolean;
-  locLoading: boolean;
-  doCheckin: () => void;
-  doCheckout: () => void;
+function ClockTab({ currentTime, myAtt, isCheckedIn, isOnBreak, locLoading, doCheckin, doCheckout, doBreak }: {
+  currentTime: Date; myAtt: any; isCheckedIn: boolean; isOnBreak: boolean;
+  locLoading: boolean; doCheckin: () => void; doCheckout: () => void;
   doBreak: (action: 'start' | 'end', type?: string) => void;
 }) {
   return (
     <div className="max-w-sm mx-auto space-y-4">
-      {/* Live ticking clock */}
       <div className="kpi-card text-center">
         <p className="text-3xl font-bold text-foreground mb-1 tabular-nums" suppressHydrationWarning>
           {format(currentTime, 'hh:mm:ss a')}
@@ -840,7 +740,6 @@ function EmployeeClockTab({
         </p>
       </div>
 
-      {/* My status card */}
       {myAtt && (
         <div className="kpi-card space-y-2">
           <div className="flex justify-between text-xs">
@@ -850,9 +749,7 @@ function EmployeeClockTab({
               myAtt.attendance?.dayStatus === 'Early' ? 'bg-blue-100 text-blue-700' :
               myAtt.attendance?.dayStatus === 'Late' ? 'bg-red-100 text-red-700' :
               'bg-gray-100 text-gray-500'
-            }`}>
-              {myAtt.attendance?.dayStatus || 'Not checked in'}
-            </Badge>
+            }`}>{myAtt.attendance?.dayStatus || 'Not checked in'}</Badge>
           </div>
           {myAtt.lastSession?.checkIn && (
             <div className="flex justify-between text-xs">
@@ -877,65 +774,41 @@ function EmployeeClockTab({
         </div>
       )}
 
-      {/* Check In / Check Out buttons */}
       <div className="grid grid-cols-2 gap-3">
-        <Button
-          onClick={doCheckin}
-          disabled={locLoading || isCheckedIn}
-          className="h-14 gap-2 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
-        >
+        <Button onClick={doCheckin} disabled={locLoading || isCheckedIn}
+          className="h-14 gap-2 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
           <CheckCircle size={18} /> Check In
         </Button>
-        <Button
-          onClick={doCheckout}
-          disabled={locLoading || !isCheckedIn}
-          variant="outline"
-          className="h-14 gap-2 border-red-400 text-red-600 hover:bg-red-50 disabled:opacity-50"
-        >
+        <Button onClick={doCheckout} disabled={locLoading || !isCheckedIn}
+          variant="outline" className="h-14 gap-2 border-red-400 text-red-600 hover:bg-red-50 disabled:opacity-50">
           <XCircle size={18} /> Check Out
         </Button>
       </div>
 
-      {/* Break buttons — all 3 types */}
       <div className="grid grid-cols-3 gap-2">
-        {/* Lunch Break */}
-        <Button
-          onClick={() => isOnBreak ? doBreak('end') : doBreak('start', 'lunch')}
-          disabled={locLoading || !isCheckedIn}
-          variant="outline"
-          className="h-12 gap-1 text-[11px] flex-col py-1 disabled:opacity-50"
-        >
+        <Button onClick={() => isOnBreak ? doBreak('end') : doBreak('start', 'lunch')}
+          disabled={locLoading || !isCheckedIn} variant="outline"
+          className="h-12 gap-1 text-[11px] flex-col py-1 disabled:opacity-50">
           <Utensils size={14} />
           {isOnBreak ? 'End Break' : 'Lunch'}
           {!isOnBreak && <span className="text-[9px] text-muted-foreground">45 min</span>}
         </Button>
-
-        {/* Short Break */}
-        <Button
-          onClick={() => doBreak('start', 'short')}
-          disabled={locLoading || !isCheckedIn || isOnBreak}
-          variant="outline"
-          className="h-12 gap-1 text-[11px] flex-col py-1 disabled:opacity-50"
-        >
+        <Button onClick={() => doBreak('start', 'short')}
+          disabled={locLoading || !isCheckedIn || isOnBreak} variant="outline"
+          className="h-12 gap-1 text-[11px] flex-col py-1 disabled:opacity-50">
           <Coffee size={14} />
           Short
           <span className="text-[9px] text-muted-foreground">10 min</span>
         </Button>
-
-        {/* Personal Break */}
-        <Button
-          onClick={() => doBreak('start', 'personal')}
-          disabled={locLoading || !isCheckedIn || isOnBreak}
-          variant="outline"
-          className="h-12 gap-1 text-[11px] flex-col py-1 disabled:opacity-50"
-        >
+        <Button onClick={() => doBreak('start', 'personal')}
+          disabled={locLoading || !isCheckedIn || isOnBreak} variant="outline"
+          className="h-12 gap-1 text-[11px] flex-col py-1 disabled:opacity-50">
           <Timer size={14} />
           Personal
           <span className="text-[9px] text-muted-foreground">15 min</span>
         </Button>
       </div>
 
-      {/* Geo-fence status */}
       <div className="flex items-center gap-2 text-[10px] text-muted-foreground px-1">
         <MapPin size={11} />
         <span>
