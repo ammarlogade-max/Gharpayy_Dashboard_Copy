@@ -1,0 +1,9 @@
+{
+    "crons": [
+      {
+        "path": "/api/cron/auto-checkout",
+        "schedule": "29 18 * * *"
+      }
+    ]
+  }
+  

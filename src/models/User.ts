@@ -4,7 +4,7 @@ export interface IUser extends Document {
   email: string;
   password?: string;
   fullName: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'manager' | 'employee' | 'user'; // 'user' kept for backward compat
   createdAt: Date;
   updatedAt: Date;
 }
@@ -12,9 +12,9 @@ export interface IUser extends Document {
 const UserSchema: Schema = new Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true },
-    password: { type: String, required: false }, // optional for OAuth users
+    password: { type: String, required: false },
     fullName: { type: String, required: true },
-    role: { type: String, enum: ['admin', 'user'], default: 'user' },
+    role: { type: String, enum: ['admin', 'manager', 'employee', 'user'], default: 'employee' },
   },
   { timestamps: true }
 );

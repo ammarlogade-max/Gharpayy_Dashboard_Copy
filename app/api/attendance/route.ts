@@ -6,6 +6,10 @@ import Attendance from '@/models/Attendance';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_change_me';
 
+function isManagerOrAdmin(role: string): boolean {
+  return role === 'admin' || role === 'manager';
+}
+
 export async function GET(req: Request) {
   try {
     const cookieStore = await cookies();
@@ -14,14 +18,21 @@ export async function GET(req: Request) {
 
     const decoded: any = jwt.verify(token, JWT_SECRET);
     const userId = decoded.userId;
-    if (!userId || userId === 'admin-id-static') return NextResponse.json([]);
+    const userRole = decoded.role || 'employee';
+
+    if (!userId) return NextResponse.json([]);
 
     const { searchParams } = new URL(req.url);
-    const week = searchParams.get('week'); // YYYY-WW
+    const week = searchParams.get('week'); // YYYY-WW format
 
     await connectToDatabase();
 
-    let query: any = { employeeId: userId };
+    // Build query — admins/managers see all, employees see only themselves
+    const query: any = {};
+
+    if (!isManagerOrAdmin(userRole) && userId !== 'admin-id-static') {
+      query.employeeId = userId;
+    }
 
     if (week) {
       const [year, weekNum] = week.split('-').map(Number);
@@ -29,24 +40,34 @@ export async function GET(req: Request) {
       const weekStart = new Date(jan1.getTime() + (weekNum - 1) * 7 * 86400000);
       weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
       const weekEnd = new Date(weekStart.getTime() + 6 * 86400000);
-      const startStr = weekStart.toISOString().split('T')[0];
-      const endStr = weekEnd.toISOString().split('T')[0];
-      query.date = { $gte: startStr, $lte: endStr };
+      query.date = {
+        $gte: weekStart.toISOString().split('T')[0],
+        $lte: weekEnd.toISOString().split('T')[0],
+      };
     }
 
-    const records = await Attendance.find(query).sort({ date: 1 });
+    const records = await Attendance.find(query)
+      .populate('employeeId', 'fullName email')
+      .sort({ date: 1 });
 
-    const heatmap = records.map((r) => ({
-      employeeId: r.employeeId,
-      date: r.date,
-      dayStatus: r.dayStatus,
-      totalWorkMins: r.totalWorkMins,
-      checkIn: r.sessions[0]?.checkIn || null,
-      checkOut: r.sessions[r.sessions.length - 1]?.checkOut || null,
-    }));
+    const heatmap = records.map((r) => {
+      const emp = r.employeeId as any;
+      return {
+        employeeId: r.employeeId,
+        employeeName: emp?.fullName || 'Unknown',
+        date: r.date,
+        dayStatus: r.dayStatus,
+        totalWorkMins: r.totalWorkMins,
+        totalWorkHours: r.totalWorkMins > 0 ? parseFloat((r.totalWorkMins / 60).toFixed(1)) : 0,
+        checkIn: r.sessions[0]?.checkIn || null,
+        checkOut: r.sessions[r.sessions.length - 1]?.checkOut || null,
+      };
+    });
 
     return NextResponse.json(heatmap);
+
   } catch (error: any) {
+    console.error('Heatmap route error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }

@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IBreak {
-  type: 'lunch' | 'short';
+  type: 'lunch' | 'short' | 'personal';
   startTime: Date;
   endTime?: Date;
   durationMins?: number;
@@ -31,7 +31,7 @@ export interface IAttendance extends Document {
 }
 
 const BreakSchema = new Schema<IBreak>({
-  type: { type: String, enum: ['lunch', 'short'], required: true },
+  type: { type: String, enum: ['lunch', 'short', 'personal'], required: true },
   startTime: { type: Date, required: true },
   endTime: { type: Date },
   durationMins: { type: Number },

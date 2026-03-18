@@ -1,12 +1,14 @@
+'use client';
 import { NavLink } from '@/components/NavLink';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings,
   MessageSquare, History, X, Moon, Sun, Building2, Bed, TrendingUp,
-  Map, Sparkles, Receipt, Globe, UserCircle, Clock,
+  Map, Sparkles, Receipt, Globe, UserCircle, Clock, ShieldCheck,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '@/contexts/AuthContext';
 
 const salesItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -33,21 +35,44 @@ const portalItems = [
   { to: '/owner-portal', icon: UserCircle, label: 'Owner Portal' },
 ];
 
+const adminItems = [
+  { to: '/admin/employees', icon: ShieldCheck, label: 'Manage Employees' },
+];
+
 const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) => {
   const pathname = usePathname();
+  const { user } = useAuth();
   const [dark, setDark] = useState(false);
+
   useEffect(() => {
     setDark(document.documentElement.classList.contains('dark'));
   }, []);
-  useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+
+  const isAdmin = user?.role === 'admin';
+  const displayName = user?.fullName || 'User';
+  const displayEmail = user?.email || '';
+  const initials = displayName.charAt(0).toUpperCase();
 
   const renderGroup = (label: string, items: typeof salesItems) => (
     <>
-      <p className="px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'hsl(var(--sidebar-fg))' }}>{label}</p>
+      <p
+        className="px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em]"
+        style={{ color: 'hsl(var(--sidebar-fg))' }}
+      >
+        {label}
+      </p>
       {items.map((item) => {
         const isActive = pathname === item.to;
         return (
-          <NavLink key={item.to} href={item.to} onClick={onClose} className={`sidebar-link ${isActive ? 'active' : ''}`}>
+          <NavLink
+            key={item.to}
+            href={item.to}
+            onClick={onClose}
+            className={`sidebar-link ${isActive ? 'active' : ''}`}
+          >
             <item.icon size={15} strokeWidth={isActive ? 2 : 1.6} />
             <span>{item.label}</span>
           </NavLink>
@@ -60,8 +85,14 @@ const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => voi
     <>
       <AnimatePresence>
         {isOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-40 bg-foreground/20 glass lg:hidden" onClick={onClose} />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-40 bg-foreground/20 glass lg:hidden"
+            onClick={onClose}
+          />
         )}
       </AnimatePresence>
 
@@ -70,17 +101,30 @@ const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => voi
         style={{ background: 'hsl(var(--sidebar-bg))', borderColor: 'hsl(var(--sidebar-border))' }}
       >
         {/* Logo */}
-        <div className="flex items-center justify-between px-4 h-14 border-b" style={{ borderColor: 'hsl(var(--sidebar-border))' }}>
+        <div
+          className="flex items-center justify-between px-4 h-14 border-b"
+          style={{ borderColor: 'hsl(var(--sidebar-border))' }}
+        >
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
               <span className="text-accent-foreground font-semibold text-xs">G</span>
             </div>
             <div>
-              <h1 className="font-semibold text-[13px] tracking-tight" style={{ color: 'hsl(var(--sidebar-active-fg))' }}>Gharpayy</h1>
-              <p className="text-[9px] -mt-0.5" style={{ color: 'hsl(var(--sidebar-fg))' }}>Booking OS</p>
+              <h1
+                className="font-semibold text-[13px] tracking-tight"
+                style={{ color: 'hsl(var(--sidebar-active-fg))' }}
+              >
+                Gharpayy
+              </h1>
+              <p className="text-[9px] -mt-0.5" style={{ color: 'hsl(var(--sidebar-fg))' }}>
+                Booking OS
+              </p>
             </div>
           </div>
-          <button className="lg:hidden p-1 rounded-md hover:bg-white/10 transition-colors" onClick={onClose}>
+          <button
+            className="lg:hidden p-1 rounded-md hover:bg-white/10 transition-colors"
+            onClick={onClose}
+          >
             <X size={16} style={{ color: 'hsl(var(--sidebar-fg))' }} />
           </button>
         </div>
@@ -90,27 +134,47 @@ const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => voi
           {renderGroup('Demand', salesItems)}
           {renderGroup('Supply', supplyItems)}
           {renderGroup('Portals', portalItems)}
+          {/* Admin section — only visible to admin role */}
+          {isAdmin && renderGroup('Admin', adminItems)}
         </nav>
 
         {/* Footer */}
-        <div className="px-2 py-3 border-t space-y-0.5" style={{ borderColor: 'hsl(var(--sidebar-border))' }}>
+        <div
+          className="px-2 py-3 border-t space-y-0.5"
+          style={{ borderColor: 'hsl(var(--sidebar-border))' }}
+        >
           <button onClick={() => setDark(!dark)} className="sidebar-link w-full">
             {dark ? <Sun size={15} strokeWidth={1.6} /> : <Moon size={15} strokeWidth={1.6} />}
             <span>{dark ? 'Light' : 'Dark'}</span>
           </button>
-          <NavLink href="/settings" onClick={onClose} className={`sidebar-link ${pathname === '/settings' ? 'active' : ''}`}>
+          <NavLink
+            href="/settings"
+            onClick={onClose}
+            className={`sidebar-link ${pathname === '/settings' ? 'active' : ''}`}
+          >
             <Settings size={15} strokeWidth={1.6} />
             <span>Settings</span>
           </NavLink>
 
-          <div className="mt-2 mx-0.5 p-2.5 rounded-lg" style={{ background: 'hsl(var(--sidebar-hover))' }}>
+          {/* User card */}
+          <div
+            className="mt-2 mx-0.5 p-2.5 rounded-lg"
+            style={{ background: 'hsl(var(--sidebar-hover))' }}
+          >
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center">
-                <span className="text-[9px] font-bold text-accent">A</span>
+              <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
+                <span className="text-[9px] font-bold text-accent">{initials}</span>
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] font-medium truncate" style={{ color: 'hsl(var(--sidebar-active-fg))' }}>Admin</p>
-                <p className="text-[9px] truncate" style={{ color: 'hsl(var(--sidebar-fg))' }}>admin@gharpayy.com</p>
+                <p
+                  className="text-[11px] font-medium truncate"
+                  style={{ color: 'hsl(var(--sidebar-active-fg))' }}
+                >
+                  {displayName}
+                </p>
+                <p className="text-[9px] truncate" style={{ color: 'hsl(var(--sidebar-fg))' }}>
+                  {displayEmail}
+                </p>
               </div>
             </div>
           </div>
