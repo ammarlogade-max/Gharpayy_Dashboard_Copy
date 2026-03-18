@@ -116,7 +116,7 @@ function getISTDateStr(): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AttendancePage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const isManager = user?.role === 'admin' || user?.role === 'manager';
   const isEmployee = !isManager;
 
@@ -265,8 +265,19 @@ export default function AttendancePage() {
   }, [isManager]);
 
   useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+    if (!authLoading) fetchAll();
+  }, [fetchAll, authLoading]);
+
+  useEffect(() => {
+    // Reset all attendance state when user switches accounts
+    setEmps(MOCK_EMPS);
+    setHm(MOCK_HM);
+    setReports([]);
+    setMyAtt(null);
+    setMyUid(null);
+    setSelectedEmp(null);
+    setEmpDetail(null);
+  }, [user?.id]);
 
   // ─── Attendance actions ─────────────────────────────────────────────────────
 
