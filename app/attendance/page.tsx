@@ -61,7 +61,7 @@ interface ApiHeatmapEntry {
   employeeId: string | { _id?: string; toString?: () => string };
   employeeName: string;
   date: string;
-  dayStatus: DayStatus | null;
+  dayStatus: string | null;  // API: 'Early' | 'On Time' | 'Late' | 'Absent'
   totalWorkMins: number;
   checkIn: string | null;
   checkOut: string | null;
@@ -1093,18 +1093,37 @@ export default function AttendancePage() {
 
           // If dayStatus is null the employee is still clocked in (not yet checked out).
           // Derive a colour from checkIn time vs 9:00 AM cutoff, or fall back to 'on_time'.
-          // dayStatus is only written by the API at checkout time.
-          // While an employee is actively clocked in, dayStatus is null.
-          // Derive status from checkIn time so the square is always coloured.
+          // The Attendance schema stores dayStatus as Title Case:
+          //   'Early' | 'On Time' | 'Late' | 'Absent'
+          // AND the default is 'Absent' even while actively clocked-in.
+          // So we must: (1) normalise to snake_case, (2) override 'absent'
+          // with a derived status when checkIn exists (employee is present).
+
+          const normStatus = (s: string | null | undefined): DayStatus => {
+            if (!s) return 'none';
+            switch (s.toLowerCase().replace(/\s+/g, '_')) {
+              case 'early':   return 'early';
+              case 'on_time': return 'on_time';
+              case 'late':    return 'late';
+              case 'absent':  return 'absent';
+              default:        return 'none';
+            }
+          };
+
           let resolvedStatus: DayStatus;
-          if (entry.dayStatus) {
-            resolvedStatus = entry.dayStatus;
-          } else if (entry.checkIn) {
-            // Employee is still clocked in — derive from check-in hour
+          const normalised = normStatus(entry.dayStatus);
+
+          if (entry.checkIn) {
+            // Employee has a check-in record — derive from actual clock-in time.
+            // This overrides 'absent' (the schema default) for active employees.
             const ci = new Date(entry.checkIn);
-            const ciMins = ci.getHours() * 60 + ci.getMinutes();
-            // <9:00 = early, 9:00–9:15 = on_time, >9:15 = late
-            resolvedStatus = ciMins < 540 ? 'early' : ciMins <= 555 ? 'on_time' : 'late';
+            // Convert UTC → IST (+5:30) for accurate time comparison
+            const istMins = (ci.getUTCHours() * 60 + ci.getUTCMinutes() + 330) % (24 * 60);
+            // Before 9:00 = early, 9:00–9:15 = on_time, after 9:15 = late
+            resolvedStatus = istMins < 540 ? 'early' : istMins <= 555 ? 'on_time' : 'late';
+          } else if (normalised !== 'none' && normalised !== 'absent') {
+            // Checked out — use the final dayStatus the server computed
+            resolvedStatus = normalised;
           } else {
             resolvedStatus = 'none';
           }
@@ -1275,7 +1294,8 @@ export default function AttendancePage() {
 
           {/* Attendance card */}
           <Shell
-            present={isEmployee ? (clockState !== 'not_in' && clockState !== 'absent' ? 1 : 0) : presentCount}
+                       present={isEmployee ? (clockState !== 'not_in' ? 1 : 0) : presentCount}
+
             total={isEmployee ? 1 : totalCount}
             sub={subMap[activeTab] ?? ''}
           >
