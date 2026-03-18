@@ -1,14 +1,17 @@
 'use client';
 import { NavLink } from '@/components/NavLink';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings,
-  MessageSquare, History, X, Moon, Sun, Building2, Bed, TrendingUp,
-  Map, Sparkles, Receipt, Globe, UserCircle, Clock, ShieldCheck,
-} from 'lucide-react';
+
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
+import {
+  LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings,
+  MessageSquare, History, X, Moon, Sun, Building2, Bed, TrendingUp,
+  Map, Sparkles, Receipt, Globe, UserCircle, Clock, ShieldCheck, LogOut,
+} from 'lucide-react';
+
 
 const salesItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -42,6 +45,7 @@ const adminItems = [
 const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) => {
   const pathname = usePathname();
   const { user } = useAuth();
+const router = useRouter();
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
@@ -155,8 +159,7 @@ const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => voi
             <Settings size={15} strokeWidth={1.6} />
             <span>Settings</span>
           </NavLink>
-
-          {/* User card */}
+{/* User card + Logout */}
           <div
             className="mt-2 mx-0.5 p-2.5 rounded-lg"
             style={{ background: 'hsl(var(--sidebar-hover))' }}
@@ -165,7 +168,7 @@ const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => voi
               <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
                 <span className="text-[9px] font-bold text-accent">{initials}</span>
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p
                   className="text-[11px] font-medium truncate"
                   style={{ color: 'hsl(var(--sidebar-active-fg))' }}
@@ -176,6 +179,16 @@ const AppSidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => voi
                   {displayEmail}
                 </p>
               </div>
+              <button
+                onClick={async () => {
+                  await fetch('/api/auth/logout', { method: 'POST' });
+                  router.push('/auth');
+                }}
+                className="p-1 rounded-md hover:bg-red-500/10 transition-colors shrink-0"
+                title="Logout"
+              >
+                <LogOut size={13} className="text-red-500" />
+              </button>
             </div>
           </div>
         </div>
